@@ -1,0 +1,48 @@
+{
+  "title": "Fleet status",
+  "bind": "127.0.0.1",
+  "port": 8540,
+
+  "machines": [
+    {"name": "gpu-box-1", "role": "dev", "os": "windows", "runtime": "wslc"},
+    {"name": "gpu-box-2", "ssh": "gpu-box-2", "role": "worker", "os": "linux", "runtime": "docker"},
+    {"name": "cpu-node-a", "ssh": "user@cpu-node-a.lan", "role": "worker", "os": "linux", "runtime": "none"},
+    {"name": "web-1", "ssh": "web-1", "role": "prod", "os": "windows", "runtime": "docker"}
+  ],
+
+  "queues": [
+    {
+      "label": "Experiment",
+      "glob": "~/experiments/queue/*.json",
+      "held_glob": "~/experiments/queue-held/*.json",
+      "fields": {"name": "name", "detail": "title", "machine": "machine", "after": "after"},
+      "duration_from": "experiments",
+      "parallel": 2
+    }
+  ],
+
+  "experiments": {
+    "title": "Experiments",
+    "subtitle": "each candidate against the current best, with 95% interval",
+    "glob": "~/experiments/results/*/result.json",
+    "unit": "score",
+    "decimals": 3,
+    "fields": {"name": "name", "title": "title", "machine": "machine", "started": "started", "ended": "ended", "verdict": "verdict"},
+    "series": [
+      {"key": "offline", "label": "Offline gate", "value": "gate.mean", "ci": "gate.ci", "verdict": "gate.verdict"},
+      {"key": "live", "label": "Live check", "value": "live.mean", "ci": "live.ci", "verdict": "live.verdict"}
+    ],
+    "markers": [{"time": "2026-01-15 17:00", "label": "new baseline"}],
+    "better_verdict": "better"
+  },
+
+  "counters": [
+    {"label": "API requests today", "file": "~/experiments/state/budget.json", "value": "used", "limit": "limit"}
+  ],
+
+  "urls": ["https://www.example.com/"],
+  "cloudflared": null,
+
+  "scheduled_tasks": {"enabled": true},
+  "claude_sessions": {"enabled": true, "projects": "~/.claude/projects"}
+}

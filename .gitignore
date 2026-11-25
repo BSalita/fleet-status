@@ -1,0 +1,7 @@
+# Your machines, paths and URLs: never commit.
+config.json
+*.local.json
+blocklist.txt
+*.log
+__pycache__/
+.claude/

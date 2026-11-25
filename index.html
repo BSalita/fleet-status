@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet status</title>
+<script>
+// Theme before first paint: saved choice, else dark.
+(function () { let t = 'dark'; try { t = localStorage.getItem('theme') || 'dark'; } catch (e) {}
+  if (t !== 'auto') document.documentElement.setAttribute('data-theme', t); })();
+</script>
+<style>
+:root {
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10); --series: #2a78d6; --series-wash: rgba(42,120,214,0.12);
+  --series-2: #eb6834;
+  --good: #0ca30c; --good-ink: #006300; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  color-scheme: light;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --series: #3987e5; --series-wash: rgba(57,135,229,0.18);
+    --series-2: #d95926; --good-ink: #0ca30c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10); --series: #3987e5; --series-wash: rgba(57,135,229,0.18);
+  --series-2: #d95926; --good-ink: #0ca30c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1800px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 24px; margin-bottom: 12px; }
+h1 { font-size: 22px; margin: 0; font-weight: 650; }
+.clock { font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 500; }
+.clock .date { color: var(--ink-2); margin-right: 10px; }
+.fresh { color: var(--muted); font-size: 13px; margin-left: auto; }
+h2 { font-size: 15px; margin: 22px 0 8px; font-weight: 650; }
+h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 8px; }
+.alerts { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.alert { background: var(--surface); border: 1px solid var(--ring); border-left: 4px solid var(--warning); border-radius: 6px; padding: 6px 10px; }
+.alert.critical { border-left-color: var(--critical); }
+.alert b { margin-right: 6px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.card.down { border-color: var(--critical); }
+.top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.name { font-weight: 650; font-size: 16px; }
+.badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--axis); color: var(--ink-2); }
+.badge.prod { border-color: var(--critical); color: var(--critical); }
+.badge.dev { border-color: var(--series); color: var(--series); }
+.state { margin-left: auto; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.spec { color: var(--ink-2); font-size: 12.5px; margin: 4px 0 8px; }
+.meter { display: grid; grid-template-columns: 52px 1fr 120px 96px; align-items: center; gap: 8px; margin: 5px 0; font-size: 13px; }
+.meter .lab { color: var(--ink-2); }
+.bar { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--series); border-radius: 0 4px 4px 0; }
+.bar > i.hot { background: var(--warning); }
+.val { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.spark { width: 96px; height: 24px; display: block; }
+.disks { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--ink-2); margin: 6px 0 4px; }
+.disks .low { color: var(--critical); font-weight: 600; }
+.sec { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 10px 0 3px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--axis); padding: 3px 6px; white-space: nowrap; }
+td { border-bottom: 1px solid var(--grid); padding: 3px 6px; vertical-align: top; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mono { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.steps { color: var(--ink-2); font-family: var(--mono); font-size: 11.5px; margin-top: 2px; }
+.steps div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; min-width: 100%; }
+.steps div::before { content: "↳ "; color: var(--muted); }
+.stepeta { color: var(--ink); background: var(--series-wash); border-radius: 4px; padding: 0 4px; }
+.muted { color: var(--muted); }
+.empty { color: var(--muted); font-size: 12.5px; padding: 3px 0; }
+.wrap { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 8px 12px; overflow-x: auto; }
+.pill { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.counters { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13px; color: var(--ink-2); margin-bottom: 6px; }
+.counters b { color: var(--ink); font-weight: 600; }
+.mini { display: inline-block; width: 120px; height: 6px; background: var(--grid); border-radius: 3px; vertical-align: middle; overflow: hidden; margin: 0 6px; }
+.mini > i { display: block; height: 100%; background: var(--series); }
+#tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--ring); border-radius: 6px; padding: 4px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); display: none; z-index: 10; white-space: nowrap; }
+.theme { display: inline-flex; border: 1px solid var(--axis); border-radius: 8px; overflow: hidden; }
+.theme button { background: transparent; color: var(--ink-2); border: 0; padding: 3px 10px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.theme button + button { border-left: 1px solid var(--axis); }
+.theme button[aria-pressed="true"] { background: var(--series); color: #fff; }
+.logline { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--ink-2); margin-top: 2px; max-width: 0; min-width: 100%; }
+.logline .txt { font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.logline .age { white-space: nowrap; color: var(--muted); }
+.logline .age.stale { color: var(--critical); font-weight: 600; }
+.loss { display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--ink-2); margin-top: 2px; max-width: 0; min-width: 100%; }
+.loss svg { width: 120px; height: 22px; flex: 0 1 120px; min-width: 60px; }
+.flag { font-weight: 600; }
+.flag.warn::before { content: "⚠ "; color: var(--warning); }
+.flag.crit::before { content: "✖ "; color: var(--critical); }
+.sess { font-size: 12.5px; }
+.sess div { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.sess .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.sess .w { color: var(--muted); white-space: nowrap; font-size: 11.5px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12.5px; color: var(--ink-2); margin: 2px 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+#xchart svg { display: block; width: 100%; }
+th.sort { cursor: pointer; user-select: none; }
+th.sort:hover { color: var(--ink); }
+.pos { color: var(--good-ink); }
+.err { color: var(--critical); font-size: 12.5px; word-break: break-word; }
+@media (max-width: 520px) { .meter { grid-template-columns: 44px 1fr 96px; } .meter .spark { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">Fleet status</h1>
+    <div class="clock"><span class="date" id="date"></span><span id="time"></span></div>
+    <div class="fresh" id="fresh">connecting…</div>
+    <div class="theme" role="group" aria-label="Theme">
+      <button data-t="auto">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button>
+    </div>
+  </header>
+  <div class="alerts" id="alerts"></div>
+  <div class="grid" id="machines"></div>
+
+  <h2>Queued work</h2>
+  <div class="wrap">
+    <div class="counters" id="counters"></div>
+    <div id="queue"></div>
+  </div>
+
+  <section id="xsec" hidden>
+  <h2><span id="xtitle">Experiments</span> <span class="sub" id="xsub"></span></h2>
+  <div class="wrap">
+    <div class="legend" id="xlegend"></div>
+    <div id="xchart"></div>
+    <div id="xtable" style="margin-top:8px"></div>
+  </div>
+  </section>
+
+  <section id="sesssec" hidden>
+  <h2>Claude sessions <span class="sub">Claude Code transcripts changed in the last day; machines their commands reached</span></h2>
+  <div class="wrap" id="sessions"></div>
+  </section>
+
+  <section id="pubsec" hidden>
+  <h2>Public URLs <span class="sub" id="pubsub"></span></h2>
+  <div class="wrap" id="public"></div>
+  </section>
+
+  <section id="tasksec" hidden>
+  <h2>Scheduled tasks <span class="sub">Windows tasks on every machine (Microsoft's and excluded ones left out), next run first</span></h2>
+  <div class="wrap" id="tasks"></div>
+  </section>
+</main>
+<div id="tip"></div>
+<script>
+const REFRESH = 15000;
+let data = null, lastFetch = 0, fetchOk = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const GB = b => b == null ? '–' : (b / 2**30 >= 100 ? (b / 2**30).toFixed(0) : (b / 2**30).toFixed(1)) + ' GB';
+const dur = s => { if (s == null) return '–'; s = Math.round(s);
+  if (s < 60) return s + ' s'; if (s < 3600) return Math.floor(s/60) + ' min';
+  if (s < 86400) return Math.floor(s/3600) + ' h ' + String(Math.floor(s%3600/60)).padStart(2,'0') + ' min';
+  return Math.floor(s/86400) + ' d ' + Math.floor(s%86400/3600) + ' h'; };
+const ago = t => t ? dur(Date.now()/1000 - t) + ' ago' : 'never';
+const fmtTime = iso => { if (!iso) return '–'; const d = new Date(iso); if (isNaN(d)) return esc(iso);
+  const today = new Date(); const same = d.toDateString() === today.toDateString();
+  return (same ? '' : d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'}) + ' ') + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}); };
+let LOW_DISK = 20 * 2**30;
+// A container that stopped within the last day; long-stopped and never-started ones are old leftovers.
+const recentlyStopped = c => c.state !== 'running' && /exited/i.test(c.status || '') && /second|minute|hour/i.test(c.status || '');
+const statusDot = (kind, label) => `<span class="pill"><span class="dot" style="background:var(--${kind})"></span>${esc(label)}</span>`;
+
+function tick() {
+  const d = new Date();
+  $('date').textContent = d.toLocaleDateString(undefined, {weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'});
+  $('time').textContent = d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  if (lastFetch) {
+    const next = Math.max(0, Math.ceil((lastFetch + REFRESH - Date.now()) / 1000));
+    $('fresh').textContent = (fetchOk ? 'data fetched ' : 'server not answering — last try ') +
+      Math.round((Date.now() - lastFetch) / 1000) + ' s ago · next in ' + next + ' s';
+  }
+}
+setInterval(tick, 1000); tick();
+
+function spark(hist, key, max) {
+  const pts = hist.filter(h => h[key] != null);
+  if (pts.length < 2) return '<svg class="spark"></svg>';
+  const W = 96, H = 24, t0 = pts[0].t, t1 = pts[pts.length-1].t || t0 + 1;
+  const x = t => (t1 === t0 ? W : (t - t0) / (t1 - t0) * (W - 2) + 1);
+  const y = v => H - 2 - Math.min(1, v / max) * (H - 4);
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ',' + y(p[key]).toFixed(1)).join('');
+  const enc = esc(JSON.stringify(pts.map(p => [p.t, p[key]])));
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" data-pts="${enc}" data-t0="${t0}" data-t1="${t1}">
+    <line x1="0" x2="${W}" y1="${H-1}" y2="${H-1}" stroke="var(--axis)" stroke-width="1"/>
+    <path d="${d}" fill="none" stroke="var(--series)" stroke-width="1.5" stroke-linejoin="round"/>
+    <circle class="hov" r="3" fill="var(--series)" stroke="var(--surface)" stroke-width="2" style="display:none"/></svg>`;
+}
+
+function meter(label, pct, text, sparkSvg) {
+  const p = pct == null ? 0 : Math.max(0, Math.min(100, pct));
+  return `<div class="meter"><span class="lab">${label}</span>
+    <div class="bar" title="${pct == null ? '' : pct.toFixed(0) + ' %'}"><i class="${p >= 90 ? 'hot' : ''}" style="width:${p}%"></i></div>
+    <span class="val">${text}</span>${sparkSvg}</div>`;
+}
+
+function machineCard(m) {
+  const down = m.reachable === false;
+  const stale = m.updated && (Date.now()/1000 - m.updated > 60);
+  let st;
+  if (m.reachable == null) st = statusDot('muted', 'first poll…');
+  else if (down) st = statusDot('critical', 'not reachable');
+  else if (stale) st = statusDot('warning', 'stale · ' + ago(m.updated));
+  else st = statusDot('good', 'updated ' + ago(m.updated));
+  const g = (m.gpus || [])[0];
+  const spec = [];
+  if (m.cpus) spec.push(m.cpus + ' threads');
+  if (m.mem_total) spec.push(GB(m.mem_total) + ' RAM');
+  spec.push(g ? g.name : 'no GPU');
+  if (m.uptime != null) spec.push('up ' + dur(m.uptime));
+  if (m.desktop) spec.push('desktop ' + (m.desktop === 'none' ? (m.desktop_check ? '<b style="color:var(--critical)">not signed in</b>' : 'not signed in') : m.desktop));
+  const hist = m.history || [];
+  let h = `<div class="card ${down ? 'down' : ''}"><div class="top"><span class="name">${esc(m.name)}</span>
+    <span class="badge ${m.role}">${m.role}</span><span class="state">${st}</span></div>`;
+  if (down) h += `<div class="err">${esc(m.error)}</div>`;
+  if (m.cpu_pct == null && !m.mem_total) return h + '</div>';
+  h += `<div class="spec">${spec.join(' · ')}</div>`;
+  const cores = m.cpu_pct != null && m.cpus ? ' · ' + (m.cpu_pct * m.cpus / 100).toFixed(0) + ' thr' : '';
+  h += meter('CPU', m.cpu_pct, m.cpu_pct == null ? '–' : m.cpu_pct.toFixed(0) + ' %' + cores, spark(hist, 'cpu', 100));
+  h += meter('Memory', m.mem_pct, GB(m.mem_used) + ' / ' + GB(m.mem_total), spark(hist, 'mem', 100));
+  if (g) {
+    h += meter('GPU', g.util, (g.util ?? '–') + ' %' + (g.temp != null ? ' · ' + g.temp + '°C' : ''), spark(hist, 'gpu', 100));
+    const vp = g.mem_total ? 100 * g.mem_used / g.mem_total : null;
+    h += meter('VRAM', vp, (g.mem_used / 1024).toFixed(1) + ' / ' + (g.mem_total / 1024).toFixed(0) + ' GB', '<span></span>');
+  }
+  h += '<div class="disks">' + (m.disks || []).map(d => {
+    const low = d.free < LOW_DISK;
+    return `<span class="${low ? 'low' : ''}">${esc(d.id)} ${GB(d.free)} free</span>`; }).join('') + '</div>';
+
+  const all = m.containers || [];
+  const ctr = all.filter(c => c.state === 'running' || recentlyStopped(c));
+  const old = all.length - ctr.length;
+  h += `<div class="sec">Containers (${all.filter(c => c.state === 'running').length} running${old ? ', ' + old + ' old stopped not shown' : ''})</div>`;
+  if (!ctr.length) h += '<div class="empty">none</div>';
+  else {
+    h += '<table><tr><th>name</th><th>state</th><th class="n">CPU</th><th class="n">memory</th></tr>';
+    for (const c of ctr) {
+      const run = c.state === 'running';
+      h += `<tr><td>${esc(c.name)}${c.service ? ' <span class="muted">service</span>' : ''}</td>
+        <td>${run ? esc(c.status) : statusDot('serious', c.status || c.state)}</td>
+        <td class="n">${run && c.cpu != null ? (c.cpu / 100).toFixed(1) + ' thr' : ''}</td>
+        <td class="n">${run && c.mem != null ? GB(c.mem) + (c.mem_limit ? ' / ' + GB(c.mem_limit) : '') : ''}</td></tr>`;
+    }
+    h += '</table>';
+  }
+  const jobs = m.jobs || [];
+  h += `<div class="sec">Jobs (${jobs.length})</div>`;
+  if (!jobs.length) h += '<div class="empty">no jobs running</div>';
+  else {
+    h += '<table><tr><th>job</th><th class="n">running</th><th class="n">ETA</th><th class="n">CPU</th><th class="n">memory</th></tr>';
+    for (const j of jobs) {
+      const steps = (j.steps || []).map(s => `<div title="${esc(s.cmd)}">${stepEta(s.eta)}${esc(s.cmd.slice(0, 110))} <span class="muted">${dur(s.elapsed)}</span></div>`).join('');
+      const idle = j.cores < 0.05;
+      const by = j.started_by ? ` · started by <span title="session ${esc(j.started_by.id)}, last matching command ${esc(ago(j.started_by.at))}">${esc(j.started_by.title)}</span>` : '';
+      const stale = jobStale(j);
+      const logs = (j.logs || []).map(l => `<div class="logline" title="${esc(l.path)}">
+        <span class="age ${stale ? 'stale' : ''}">log ${dur(l.age)} ago</span><span class="txt">${esc(l.last || '(empty)')}</span></div>`).join('');
+      h += `<tr><td><div class="mono" title="${esc(j.cmd)}">${esc(j.cmd.slice(0, 140))}</div>
+        <div class="muted" style="font-size:11.5px">${esc(j.where)} · ${j.procs} proc${j.procs === 1 ? '' : 's'}${j.workers ? ' (' + j.workers + ' workers)' : ''}${idle ? ' · idle / waiting' : ''}${by}</div>
+        ${steps ? '<div class="steps">' + steps + '</div>' : ''}${logs}${lossLine(j)}</td>
+        <td class="n">${dur(j.elapsed)}</td><td class="n">${etaCell(j.eta)}</td><td class="n">${j.cores.toFixed(1)} thr</td><td class="n">${GB(j.rss)}</td></tr>`;
+    }
+    h += '</table>';
+  }
+  const ss = m.sessions || [];
+  h += `<div class="sec">Claude sessions here, last 6 h (${ss.length})</div>`;
+  if (!ss.length) h += '<div class="empty">none</div>';
+  else h += '<div class="sess">' + ss.map(x => `<div>${statusDot(x.active ? 'good' : 'muted', '')}
+      <span class="t" title="${esc(x.title)} (${esc(x.id)})">${esc(x.title)}</span>
+      <span class="w">${x.containers.length ? esc(x.containers.join(', ')) + ' · ' : ''}${x.commands} cmd · ${ago(x.last)}</span></div>`).join('') + '</div>';
+  return h + '</div>';
+}
+
+// ETA: finish time (clock) and time left; "~" when it counts loop items still to come,
+// "≥" when a step beside it shows no progress, "+N steps" for later steps of unknown length.
+// Finish time on one line; the time left (and the day, when not today) on the muted line under it.
+const clockAt = left => new Date(Date.now() + left * 1000).toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+const leftDay = left => { const d = new Date(Date.now() + left * 1000);
+  return dur(left) + (d.toDateString() === new Date().toDateString() ? '' : ' · ' + d.toLocaleDateString(undefined, {weekday: 'short'})); };
+function stepEta(e) {
+  if (!e) return '';
+  const bits = [];
+  if (e.pct != null) bits.push(e.pct.toFixed(0) + ' %');
+  if (e.left != null) bits.push(e.due ? 'due now' : dur(e.left) + ' left');
+  return bits.length ? `<span class="stepeta" title="from ${esc(e.how)}">${bits.join(' · ')}</span> ` : '';
+}
+function etaCell(e) {
+  if (!e) return '<span class="muted" title="no progress line in its logs and no time limit">–</span>';
+  const more = e.more ? `<div class="muted">+${e.more} step${e.more === 1 ? '' : 's'}</div>` : '';
+  if (e.left == null) return `<span class="muted" title="${esc(e.how)}">${e.waiting ? 'waiting' : '–'}</span>${more}`;
+  const tip = 'from ' + e.how + (e.partial ? '; a step beside it shows no progress' : '') + (e.more ? `; then ${e.more} later step(s) of unknown length` : '');
+  if (e.due) return `<span title="${esc(tip)}">due now</span>${more}`;
+  const pre = (e.partial ? '≥' : '') + (/more \$/.test(e.how) ? '~' : '');
+  return `<span title="${esc(tip)}"><b style="white-space:nowrap">${pre}${clockAt(e.left)}</b><div class="muted">${leftDay(e.left)}</div></span>${more}`;
+}
+
+// A running job whose logs have all been silent too long; a queue sleeping between steps is fine.
+function jobStale(j) { return data && j.log_age != null && j.log_age > data.stale_log && !j.sleeping; }
+
+function lossLine(j) {
+  const L = j.loss; if (!L || !L.values.length) return '';
+  const vals = L.values.filter(v => v != null);
+  let svg = '';
+  if (vals.length >= 2) {
+    const W = 120, H = 22, lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+    const pts = L.values.map((v, i) => v == null ? null : [1 + i / (L.values.length - 1) * (W - 2), H - 2 - (v - lo) / span * (H - 4)]).filter(Boolean);
+    svg = `<svg viewBox="0 0 ${W} ${H}" data-tip="${esc(L.key)}: ${vals.length} values in the log tail, from ${lo.toPrecision(4)} to ${hi.toPrecision(4)}">
+      <path d="${pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join('')}" fill="none" stroke="var(--series)" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+  }
+  const last = L.values[L.values.length - 1];
+  const flag = L.bad ? '<span class="flag crit">NaN/inf</span>' : L.flat ? '<span class="flag warn">not moving</span>' : '';
+  return `<div class="loss"><span>${esc(L.key)}</span>${svg}<span>${last == null ? 'NaN' : (+last).toPrecision(4)}</span>${flag}</div>`;
+}
+
+function alerts(d) {
+  const out = [];
+  for (const m of d.machines) {
+    if (m.reachable === false) out.push(['critical', m.name, 'not reachable: ' + (m.error || '')]);
+    if (m.reachable && m.desktop_check && m.desktop === 'none') out.push(['warning', m.name, 'nobody signed in on the desktop: wslc build/run will fail']);
+    for (const dk of m.disks || []) if (dk.free < LOW_DISK)
+      out.push([dk.free < 5 * 2**30 ? 'critical' : 'warning', m.name, `${dk.id} has only ${GB(dk.free)} free`]);
+    for (const c of m.containers || []) if (recentlyStopped(c))
+      out.push(['warning', m.name, `container ${c.name} stopped: ${c.status}`]);
+    for (const c of m.containers || []) if (c.state === 'running' && c.mem && c.mem_limit && c.mem / c.mem_limit > 0.95)
+      out.push(['warning', m.name, `container ${c.name} uses ${GB(c.mem)} of its ${GB(c.mem_limit)} limit`]);
+    if (m.mem_pct != null && m.mem_pct > 92) out.push(['warning', m.name, `memory ${m.mem_pct.toFixed(0)} % used`]);
+    for (const j of m.jobs || []) {
+      const what = `${j.where}: ${j.cmd.slice(0, 60)}`;
+      if (jobStale(j)) out.push(['warning', m.name, `${what} — log silent for ${dur(j.log_age)}`]);
+      if (j.loss && j.loss.bad) out.push(['critical', m.name, `${what} — ${j.loss.key} is NaN/inf`]);
+      else if (j.loss && j.loss.flat) out.push(['warning', m.name, `${what} — ${j.loss.key} has not moved in its last 5 values`]);
+    }
+  }
+  for (const p of d.public || []) if (p.ever_ok && (!p.code || p.code >= 500))
+    out.push(['critical', 'public URL', `${p.url} answers ${p.code || p.error}`]);
+  return out;
+}
+
+function render(d) {
+  $('machines').innerHTML = d.machines.map(machineCard).join('');
+  $('alerts').innerHTML = alerts(d).map(([k, who, msg]) =>
+    `<div class="alert ${k}"><b>${k === 'critical' ? '✖' : '⚠'} ${esc(who)}</b>${esc(msg)}</div>`).join('');
+
+  // Counters from the config (e.g. an API budget): value, and a bar when there is a limit.
+  $('counters').innerHTML = (d.counters || []).map(c => {
+    const v = c.value, lim = c.limit, num = typeof v === 'number';
+    const bar = num && typeof lim === 'number' && lim > 0 ? `<span class="mini"><i style="width:${Math.min(100, 100 * v / lim)}%"></i></span>of ${lim.toLocaleString()}` : '';
+    return `<span>${esc(c.label)}: <b>${v == null ? '–' : num ? v.toLocaleString() : esc(v)}</b>${bar}${c.note ? ' <span class="muted">' + esc(c.note) + '</span>' : ''}</span>`; }).join('');
+  const q = (d.queue || []).slice();
+  // Job queues other sessions run as shell scripts (queue*.sh): what each is doing now.
+  for (const m of d.machines) for (const j of m.jobs || []) if (j.queue) q.push({
+    kind: 'Script queue', name: j.cmd, machine: m.name + ' · ' + j.where,
+    detail: (j.steps || []).length ? 'now: ' + j.steps[0].cmd.slice(0, 100) + (j.steps.length > 1 ? ` (+${j.steps.length - 1} more)` : '') : 'between steps',
+    waits_for: j.eta && j.eta.more ? `rest of the script (${j.eta.more} more step${j.eta.more === 1 ? '' : 's'})` : j.eta ? 'nothing after this' : 'rest of the script',
+    state: j.cores < 0.05 ? 'waiting' : 'running', pos: null, eta: j.eta,
+    since: Date.now() / 1000 - (j.elapsed || 0)});
+  const stateKind = s => s === 'running' ? 'good' : s === 'held' ? 'muted' : s === 'queued' ? 'series' : 'warning';
+  const queueEta = r => {
+    if (r.eta) return etaCell(r.eta);
+    if (r.eta_left != null) return `<span title="${esc(r.eta_how)}"><b style="white-space:nowrap">~${clockAt(r.eta_left)}</b><div class="muted">${leftDay(r.eta_left)}</div></span>`;
+    if (r.eta_each) return `<span class="muted" title="${esc(r.eta_how)}">~${dur(r.eta_each)} once started</span>`;
+    return '<span class="muted">–</span>';
+  };
+  $('queue').innerHTML = !q.length ? '<div class="empty">nothing queued</div>' :
+    '<table><tr><th class="n">#</th><th>kind</th><th>name</th><th class="n">ETA (done)</th><th>what</th><th>machine</th><th>waits for</th><th>state</th><th>queued</th></tr>' +
+    q.map(r => `<tr><td class="n">${r.pos ?? ''}</td><td>${esc(r.kind)}</td><td class="mono" style="word-break:normal;white-space:nowrap">${esc(r.name)}</td>
+      <td class="n" style="white-space:nowrap">${queueEta(r)}</td><td>${esc(r.detail)}</td>
+      <td>${esc(r.machine)}</td><td>${esc(r.waits_for)}</td><td>${statusDot(stateKind(r.state), r.state)}</td>
+      <td class="n">${fmtTime(new Date(r.since * 1000).toISOString())}</td></tr>`).join('') + '</table>';
+
+  $('title').textContent = d.title || 'Fleet status'; document.title = d.title || 'Fleet status';
+  if (d.low_disk) LOW_DISK = d.low_disk;
+  $('xsec').hidden = !d.experiments_meta;
+  if (d.experiments_meta) { $('xtitle').textContent = d.experiments_meta.title; $('xsub').textContent = d.experiments_meta.subtitle;
+    renderExperiments(d.experiments || [], d.experiments_meta); }
+  $('sesssec').hidden = !d.sessions;
+  if (d.sessions) renderSessions(d.sessions);
+  $('pubsec').hidden = !(d.public || []).length && !d.public_checked;
+  $('tasksec').hidden = !d.show_tasks;
+
+  const pub = d.public || [];
+  $('pubsub').textContent = d.public_checked ? 'checked ' + ago(d.public_checked) + ' (every minute)' : 'first check…';
+  $('public').innerHTML = !pub.length ? '<div class="empty">not checked yet</div>' :
+    '<table><tr><th>address</th><th>answer</th><th class="n">time</th></tr>' + pub.map(p => {
+      const k = !p.code || p.code >= 500 ? 'critical' : p.code >= 400 ? 'warning' : 'good';
+      return `<tr><td><a href="${esc(p.url)}" target="_blank" rel="noopener" style="color:inherit">${esc(p.url)}</a></td>
+        <td>${statusDot(k, p.code ? 'HTTP ' + p.code : (p.error || 'no answer'))}</td><td class="n">${p.ms != null ? p.ms + ' ms' : ''}</td></tr>`; }).join('') + '</table>';
+
+  const tk = d.tasks || [];
+  $('tasks').innerHTML = !tk.length ? '<div class="empty">none found yet</div>' :
+    '<table><tr><th>machine</th><th>task</th><th>state</th><th>next run</th><th>last run</th><th>last result</th></tr>' + tk.map(t => {
+      const ok = t.result === 0 || t.result === 267009 || t.result === 267011;
+      const lab = t.result === 0 ? 'OK' : t.result === 267009 ? 'running' : t.result === 267011 ? 'not run yet' : '0x' + (t.result >>> 0).toString(16);
+      return `<tr><td>${esc(t.machine)}</td><td>${esc(t.name)}</td><td>${esc(t.state)}</td><td>${fmtTime(t.next)}</td><td>${fmtTime(t.last)}</td>
+        <td>${t.last ? statusDot(ok ? 'good' : 'serious', lab) : ''}</td></tr>`; }).join('') + '</table>';
+}
+
+// ---- Experiments: chart and table, series and markers from the config ----
+const SERIES_COLORS = ['var(--series)', 'var(--series-2)'];
+let xsort = {key: 'ended', dir: -1};
+const localDate = s => s ? new Date(typeof s === 'number' ? s * 1000 : String(s).replace(' ', 'T')) : null;
+const signed = (v, n = 3) => v == null ? '–' : (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(n);
+
+function niceStep(span) {
+  const raw = span / 5, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  return [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= raw);
+}
+
+function renderExperiments(ex, meta) {
+  const dec = meta.decimals ?? 3, unit = meta.unit || '';
+  const SERIES = meta.series.map((x, i) => ({...x, color: SERIES_COLORS[i % 2], dx: meta.series.length > 1 ? (i - (meta.series.length - 1) / 2) * 6 : 0}));
+  const est = g => g ? `${signed(g.v, dec)}${g.ci != null ? ' ±' + g.ci.toFixed(dec) : ''}` : '–';
+  $('xlegend').innerHTML = SERIES.map(s => `<span><i style="background:${s.color}"></i>${esc(s.label)}</span>`).join('') +
+    '<span class="muted">bars: interval' + (meta.markers.length ? ' · dashed line: marker' : '') + '</span>';
+  const pts = [];
+  for (const e of ex) { const t = localDate(e.ended); if (!t || isNaN(t)) continue;
+    for (const s of SERIES) { const g = e.values[s.key]; if (g) pts.push({e, s, t: t.getTime(), v: g.v, ci: g.ci || 0, g}); } }
+  const box = $('xchart');
+  if (!pts.length) { box.innerHTML = '<div class="empty">no finished experiments</div>'; }
+  else {
+    const W = Math.max(320, box.clientWidth || 900), H = 270, L = 52, R = 12, T = 24, B = 26;
+    let t0 = Math.min(...pts.map(p => p.t)), t1 = Math.max(...pts.map(p => p.t));
+    const pad = Math.max(3600e3, (t1 - t0) * 0.03); t0 -= pad; t1 += pad;
+    let lo = Math.min(0, ...pts.map(p => p.v - p.ci)), hi = Math.max(0, ...pts.map(p => p.v + p.ci));
+    if (hi === lo) hi = lo + 1;
+    const step = niceStep(hi - lo); lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    const x = t => L + (t - t0) / (t1 - t0) * (W - L - R), y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+    let g = '';
+    for (let v = lo; v <= hi + 1e-9; v += step) {
+      const yy = y(v).toFixed(1), zero = Math.abs(v) < 1e-9;
+      g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--${zero ? 'axis' : 'grid'})" stroke-width="1"/>
+        <text x="${L - 6}" y="${yy}" dy="0.32em" text-anchor="end" font-size="11" fill="var(--muted)">${zero ? '0' : signed(v, step < 0.01 ? 3 : 2)}</text>`;
+    }
+    const d0 = new Date(t0); d0.setHours(0, 0, 0, 0);
+    const days = (t1 - t0) / 86400e3, every = Math.max(1, Math.ceil(days / 10));
+    for (let d = new Date(d0.getTime() + 86400e3), i = 0; d.getTime() < t1; d = new Date(d.getTime() + 86400e3), i++) {
+      if (i % every) continue;
+      const xx = x(d.getTime()).toFixed(1);
+      g += `<line x1="${xx}" x2="${xx}" y1="${H - B}" y2="${H - B + 4}" stroke="var(--axis)"/>
+        <text x="${xx}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--muted)">${d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}</text>`;
+    }
+    for (const c of meta.markers) { const ct = c.t * 1000; if (ct > t0 && ct < t1) {
+      const xx = x(ct).toFixed(1);
+      g += `<line x1="${xx}" x2="${xx}" y1="${T}" y2="${H - B}" stroke="var(--muted)" stroke-dasharray="4 3"/>
+        <text x="${+xx + 4}" y="${T + 9}" font-size="11" fill="var(--ink-2)">${esc(c.label)}</text>`; } }
+    for (const p of pts) {
+      const xx = (x(p.t) + p.s.dx).toFixed(1);
+      const tip = `${p.e.name}${p.e.title ? ' — ' + p.e.title : ''}\n${p.s.label}: ${est(p.g)} ${unit}${p.g.verdict ? ' (' + p.g.verdict + ')' : ''}\nended ${p.e.ended}`;
+      g += `<g data-tip="${esc(tip)}"><line x1="${xx}" x2="${xx}" y1="${y(p.v + p.ci).toFixed(1)}" y2="${y(p.v - p.ci).toFixed(1)}" stroke="${p.s.color}" stroke-width="1.5" opacity="0.55"/>
+        <circle cx="${xx}" cy="${y(p.v).toFixed(1)}" r="4.5" fill="${p.s.color}" stroke="var(--surface)" stroke-width="2"/>
+        <circle cx="${xx}" cy="${y(p.v).toFixed(1)}" r="10" fill="transparent"/></g>`;
+    }
+    g += `<text x="4" y="11" font-size="11" fill="var(--muted)">${esc(unit)}</text>`;
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="Experiment results over time">${g}</svg>`;
+  }
+  const cols = [['name', 'experiment', e => e.name], ['ended', 'ended', e => String(e.ended || '')],
+    ...SERIES.map(s => [s.key, s.label, e => e.values[s.key] ? e.values[s.key].v : -1e9]),
+    ['verdict', 'verdict', e => e.verdict || '']];
+  const col = cols.find(c => c[0] === xsort.key) || cols[1];
+  const rows = ex.slice().sort((a, b) => { const va = col[2](a), vb = col[2](b); return (va < vb ? -1 : va > vb ? 1 : 0) * xsort.dir; });
+  const cell = g => g ? `<span class="${g.verdict === meta.better ? 'pos' : ''}">${est(g)}</span>` : '<span class="muted">–</span>';
+  const keys = SERIES.map(s => s.key);
+  $('xtable').innerHTML = '<table><tr>' + cols.map(c => `<th class="sort ${keys.includes(c[0]) ? 'n' : ''}" data-k="${esc(c[0])}">${esc(c[1])}${xsort.key === c[0] ? (xsort.dir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>' +
+    rows.map(e => { const ed = localDate(e.ended); return `<tr><td><span class="mono" style="word-break:normal;white-space:nowrap">${esc(e.name)}</span><div class="muted" style="font-size:11.5px">${esc(e.title || '')}</div></td>
+      <td class="n">${ed && !isNaN(ed) ? fmtTime(ed.toISOString()) : esc(e.state || '')}</td>
+      ${SERIES.map(s => `<td class="n">${cell(e.values[s.key])}</td>`).join('')}
+      <td>${esc(e.verdict)}</td></tr>`; }).join('') + '</table>';
+}
+document.addEventListener('click', e => {
+  const th = e.target.closest && e.target.closest('#xtable th.sort'); if (!th) return;
+  const k = th.dataset.k; xsort = {key: k, dir: xsort.key === k ? -xsort.dir : (k === 'name' ? 1 : -1)};
+  if (data && data.experiments_meta) renderExperiments(data.experiments || [], data.experiments_meta);
+});
+
+function renderSessions(ss) {
+  $('sessions').innerHTML = !ss.length ? '<div class="empty">none</div>' :
+    '<table><tr><th>session</th><th>state</th><th>last activity</th><th>machines (last command there)</th></tr>' + ss.map(s => {
+      const ms = Object.entries(s.machines).sort((a, b) => b[1].last - a[1].last)
+        .map(([m, e]) => `<span title="${e.commands} commands${e.containers.length ? '; containers ' + esc(e.containers.join(', ')) : ''}">${esc(m)} <span class="muted">${ago(e.last)}</span></span>`).join(' · ');
+      return `<tr><td>${esc(s.title)}<div class="muted mono" style="font-size:11px">${esc(s.id)}</div></td>
+        <td>${statusDot(s.active ? 'good' : 'muted', s.active ? 'active' : 'idle')}</td><td class="n">${ago(s.mtime)}</td><td>${ms || '<span class="muted">none</span>'}</td></tr>`; }).join('') + '</table>';
+}
+
+// ---- Theme switch: Auto follows the system; the choice is kept in this browser ----
+function setTheme(t) {
+  if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('theme', t); } catch (e) {}
+  document.querySelectorAll('.theme button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+}
+document.querySelectorAll('.theme button').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.t)));
+(function () { let t = 'dark'; try { t = localStorage.getItem('theme') || 'dark'; } catch (e) {} setTheme(t); })();
+
+async function load() {
+  try {
+    const r = await fetch('/api/status', {cache: 'no-store'});
+    data = await r.json(); fetchOk = true; render(data);
+  } catch (e) { fetchOk = false; }
+  lastFetch = Date.now(); tick();
+}
+load(); setInterval(load, REFRESH);
+
+// Sparkline hover: value and time under the pointer.
+const tip = $('tip');
+document.addEventListener('mousemove', e => {
+  const svg = e.target.closest && e.target.closest('svg.spark[data-pts]');
+  document.querySelectorAll('svg.spark .hov').forEach(c => { if (!svg || !svg.contains(c)) c.style.display = 'none'; });
+  if (!svg) {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) { tip.style.display = 'none'; return; }
+    tip.textContent = el.dataset.tip; tip.style.whiteSpace = 'pre'; tip.style.display = 'block';
+    const w = tip.offsetWidth; tip.style.left = Math.min(e.clientX + 12, innerWidth - w - 8) + 'px'; tip.style.top = (e.clientY - 10 - tip.offsetHeight) + 'px';
+    return;
+  }
+  tip.style.whiteSpace = 'nowrap';
+  const pts = JSON.parse(svg.dataset.pts), t0 = +svg.dataset.t0, t1 = +svg.dataset.t1;
+  const box = svg.getBoundingClientRect(), fx = (e.clientX - box.left) / box.width;
+  const t = t0 + fx * (t1 - t0);
+  let best = pts[0]; for (const p of pts) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+  const c = svg.querySelector('.hov');
+  c.setAttribute('cx', ((best[0] - t0) / (t1 - t0 || 1) * 94 + 1).toFixed(1));
+  c.setAttribute('cy', (22 - Math.min(1, best[1] / 100) * 20).toFixed(1)); c.style.display = '';
+  tip.textContent = `${best[1].toFixed(0)} % at ${new Date(best[0] * 1000).toLocaleTimeString()}`;
+  tip.style.display = 'block'; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 28) + 'px';
+});
+</script>
+</body>
+</html>
